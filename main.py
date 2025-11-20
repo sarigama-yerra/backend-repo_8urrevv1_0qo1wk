@@ -1,8 +1,10 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, EmailStr, Field
+from datetime import datetime, timezone
 
-app = FastAPI()
+app = FastAPI(title="Saikumar Dusa Portfolio API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -12,17 +14,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-def read_root():
-    return {"message": "Hello from FastAPI Backend!"}
+class ContactMessage(BaseModel):
+    name: str = Field(..., min_length=2, max_length=100)
+    email: EmailStr
+    message: str = Field(..., min_length=5, max_length=2000)
 
-@app.get("/api/hello")
-def hello():
-    return {"message": "Hello from the backend API!"}
+# In a real app, you'd persist contact messages. We'll store them if DB is configured.
+try:
+    from database import db
+except Exception:
+    db = None
+
+@app.get("/")
+async def root():
+    return {"message": "Portfolio API running", "owner": "Saikumar Dusa"}
+
+@app.post("/api/contact")
+async def submit_contact(payload: ContactMessage):
+    doc = {
+        **payload.model_dump(),
+        "created_at": datetime.now(timezone.utc)
+    }
+    if db is not None:
+        try:
+            db["contact"].insert_one(doc)
+            return {"ok": True, "stored": True}
+        except Exception:
+            return {"ok": True, "stored": False}
+    return {"ok": True, "stored": False}
 
 @app.get("/test")
 def test_database():
-    """Test endpoint to check if database is available and accessible"""
     response = {
         "backend": "✅ Running",
         "database": "❌ Not Available",
@@ -31,39 +53,26 @@ def test_database():
         "connection_status": "Not Connected",
         "collections": []
     }
-    
     try:
-        # Try to import database module
-        from database import db
-        
-        if db is not None:
+        from database import db as db_conn
+        if db_conn is not None:
             response["database"] = "✅ Available"
-            response["database_url"] = "✅ Configured"
-            response["database_name"] = db.name if hasattr(db, 'name') else "✅ Connected"
+            response["database_url"] = "✅ Set" if os.getenv("DATABASE_URL") else "❌ Not Set"
+            response["database_name"] = db_conn.name if hasattr(db_conn, 'name') else "✅ Connected"
             response["connection_status"] = "Connected"
-            
-            # Try to list collections to verify connectivity
             try:
-                collections = db.list_collection_names()
-                response["collections"] = collections[:10]  # Show first 10 collections
+                collections = db_conn.list_collection_names()
+                response["collections"] = collections[:10]
                 response["database"] = "✅ Connected & Working"
             except Exception as e:
                 response["database"] = f"⚠️  Connected but Error: {str(e)[:50]}"
         else:
             response["database"] = "⚠️  Available but not initialized"
-            
-    except ImportError:
-        response["database"] = "❌ Database module not found (run enable-database first)"
     except Exception as e:
         response["database"] = f"❌ Error: {str(e)[:50]}"
-    
-    # Check environment variables
-    import os
     response["database_url"] = "✅ Set" if os.getenv("DATABASE_URL") else "❌ Not Set"
     response["database_name"] = "✅ Set" if os.getenv("DATABASE_NAME") else "❌ Not Set"
-    
     return response
-
 
 if __name__ == "__main__":
     import uvicorn
